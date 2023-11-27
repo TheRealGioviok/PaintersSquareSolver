@@ -158,7 +158,7 @@ int scan_single_element(int wg_start, int wg_end, int li, int tail,
 	// Save tail for other work-items to use
 	lmem[li] = sum.s3;
  
-	// Do naive scan on the tails in local memory (which is actually better than doing Blelloch scan on local memory since we have a small number of elements)
+	// Do naive scan on the tails in local memory
 	for (int active_mask = 1; active_mask < lws; active_mask <<= 1) {
 		int pull_mask = active_mask - 1; // 000111...111
 		pull_mask = ~pull_mask;          // 111000...000
