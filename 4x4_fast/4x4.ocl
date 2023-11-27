@@ -1,0 +1,269 @@
+#define PMOVE1MASK 0b111000111000000000000000
+#define PMOVE2MASK 0b000111111111000000000000
+#define PMOVE3MASK 0b111111111000111111000000
+#define PMOVE4MASK 0b000111000111000111000000
+#define PMOVE5MASK 0b000000111000111000111000
+#define PMOVE6MASK 0b000000111111000111111111
+#define PMOVE7MASK 0b000000000000111111111000
+#define PMOVE8MASK 0b000000000000000111000111
+
+#define NPMOVE1MASK 0b000111000111111111111111
+#define NPMOVE2MASK 0b111000000000111111111111
+#define NPMOVE3MASK 0b000000000111000000111111
+#define NPMOVE4MASK 0b111000111000111000111111
+#define NPMOVE5MASK 0b111111000111000111000111
+#define NPMOVE6MASK 0b111111000000111000000000
+#define NPMOVE7MASK 0b111111111111000000000111
+#define NPMOVE8MASK 0b111111111111111000111000
+
+
+#define M1 0b100100100100100100100100
+#define M2 0b010010010010010010010010
+#define M3 0b001001001001001001001001
+
+#define POSITION_TODISCOVER (1<<24)
+#define ANYHASH (POSITION_TODISCOVER - 1)
+#define POSITION_STARTPOS 0
+
+int round_div_up(int num, int div){
+	return (num + div - 1)/div;
+}
+
+int round_mul_up(int num, int div){
+	return round_div_up(num, div)*div;
+}
+
+void _printboard(int pid, int sid){
+    int i = 0, j = 0;
+    for (int y = 0; y < 4; y++){
+        for (int x = 0; x < 4; x++){
+            if ((x+y)%2 == 0){
+                printf("%d ", (pid >> i) & 0x7);
+                i += 3;
+            } else {
+                printf("%d ", (sid >> j) & 0x7);
+                j += 3;
+            }
+        }
+        printf("\n");
+    }
+}
+
+/*
+ * This first kernel expands the primary board to the next level.
+ * It uses the bitfiddling method described above to calculate the new positions
+ * It will write the results to the results array
+ */
+void kernel expand_subvec(global unsigned int * restrict parent_table, global const unsigned int * workload, global unsigned int * next_workload, unsigned int workload_size) {
+    int i = get_global_id(0);
+    if (i >= workload_size) return;
+    // Get current item to expand
+    unsigned int hash = workload[i];
+
+    // Calculate the add1 position
+    unsigned int add1 = hash + M3;
+    //k = (add1 >> 1) & add1; // We can remove the & M2 because we know that there are no 111 as result  of add1, since we remove 110 immediately with this op
+    add1 = add1 ^ (add1 & ((add1 >> 1) | (add1 << 1))); // add1 = (add1 - ((k << 1)|k)) can be simplified to this
+
+    // Write the results. We both need to set the position's parent to the current position, and add it to the next workload
+    for (int i = 0; i < 16; i++) {
+        unsigned int m =    ((i & 0x7) == 0) * ((add1 & PMOVE1MASK) | (hash & NPMOVE1MASK)) +
+                            ((i & 0x7) == 1) * ((add1 & PMOVE2MASK) | (hash & NPMOVE2MASK)) +
+                            ((i & 0x7) == 2) * ((add1 & PMOVE3MASK) | (hash & NPMOVE3MASK)) +
+                            ((i & 0x7) == 3) * ((add1 & PMOVE4MASK) | (hash & NPMOVE4MASK)) +
+                            ((i & 0x7) == 4) * ((add1 & PMOVE5MASK) | (hash & NPMOVE5MASK)) +
+                            ((i & 0x7) == 5) * ((add1 & PMOVE6MASK) | (hash & NPMOVE6MASK)) +
+                            ((i & 0x7) == 6) * ((add1 & PMOVE7MASK) | (hash & NPMOVE7MASK)) +
+                            ((i & 0x7) == 7) * ((add1 & PMOVE8MASK) | (hash & NPMOVE8MASK));
+            add1 -= M2 * (i == 7);
+        
+        if (parent_table[m] == POSITION_TODISCOVER) {
+            parent_table[m] = hash;
+            next_workload[m] = m;
+        }
+    }
+}
+
+void kernel expand(global unsigned int * restrict parent_table, global const unsigned int * workload, global unsigned int * next_workload, int workload_size){
+    // This kernel is the same as the vectorized one, but without bitgroups tricks.
+    // It still uses the partial move masks, but it does not use the bitgroups tricks
+    // It is used to test the performance of the bitgroups tricks
+    int i = get_global_id(0);
+    if (i >= workload_size) return;
+
+    // Get current item to expand
+    unsigned int hash = workload[i];
+
+    // Separate the bitgroups
+    unsigned char o[8] = {hash & 0x7, (hash >> 3) & 0x7, (hash >> 6) & 0x7, (hash >> 9) & 0x7, (hash >> 12) & 0x7, (hash >> 15) & 0x7, (hash >> 18) & 0x7, (hash >> 21) & 0x7};
+    unsigned char a[8] = {(o[0] + 1) % 6, (o[1] + 1) % 6, (o[2] + 1) % 6, (o[3] + 1) % 6, (o[4] + 1) % 6, (o[5] + 1) % 6, (o[6] + 1) % 6, (o[7] + 1) % 6};
+    unsigned char s[8] = {(o[0] + 5) % 6, (o[1] + 5) % 6, (o[2] + 5) % 6, (o[3] + 5) % 6, (o[4] + 5) % 6, (o[5] + 5) % 6, (o[6] + 5) % 6, (o[7] + 5) % 6};
+
+    // Write the results. We both need to set the position's parent to the current position, and add it to the next workload
+    for (int i = 1; i <= 16; i++) {
+        unsigned int m = 0;
+        switch (i) {
+            // Add moves
+            case 1: m = (a[0] << 0) | (o[1] << 3) | (a[2] << 6) | (o[3] << 9) | (o[4] << 12) | (o[5] << 15) | (o[6] << 18) | (o[7] << 21); break;
+            case 2: m = (o[0] << 0) | (a[1] << 3) | (a[2] << 6) | (a[3] << 9) | (o[4] << 12) | (o[5] << 15) | (o[6] << 18) | (o[7] << 21); break;
+            case 3: m = (a[0] << 0) | (a[1] << 3) | (a[2] << 6) | (o[3] << 9) | (a[4] << 12) | (a[5] << 15) | (o[6] << 18) | (o[7] << 21); break;
+            case 4: m = (o[0] << 0) | (a[1] << 3) | (o[2] << 6) | (a[3] << 9) | (o[4] << 12) | (a[5] << 15) | (o[6] << 18) | (o[7] << 21); break;
+            case 5: m = (o[0] << 0) | (o[1] << 3) | (a[2] << 6) | (o[3] << 9) | (a[4] << 12) | (o[5] << 15) | (a[6] << 18) | (o[7] << 21); break;
+            case 6: m = (o[0] << 0) | (o[1] << 3) | (a[2] << 6) | (a[3] << 9) | (o[4] << 12) | (a[5] << 15) | (a[6] << 18) | (a[7] << 21); break;
+            case 7: m = (o[0] << 0) | (o[1] << 3) | (o[2] << 6) | (o[3] << 9) | (a[4] << 12) | (a[5] << 15) | (a[6] << 18) | (o[7] << 21); break;
+            case 8: m = (o[0] << 0) | (o[1] << 3) | (o[2] << 6) | (o[3] << 9) | (o[4] << 12) | (a[5] << 15) | (o[6] << 18) | (a[7] << 21); break;
+            // Sub moves
+            case 9: m = (s[0] << 0) | (o[1] << 3) | (s[2] << 6) | (o[3] << 9) | (o[4] << 12) | (o[5] << 15) | (o[6] << 18) | (o[7] << 21); break;
+            case 10: m = (o[0] << 0) | (s[1] << 3) | (s[2] << 6) | (s[3] << 9) | (o[4] << 12) | (o[5] << 15) | (o[6] << 18) | (o[7] << 21); break;
+            case 11: m = (s[0] << 0) | (s[1] << 3) | (s[2] << 6) | (o[3] << 9) | (s[4] << 12) | (s[5] << 15) | (o[6] << 18) | (o[7] << 21); break;
+            case 12: m = (o[0] << 0) | (s[1] << 3) | (o[2] << 6) | (s[3] << 9) | (o[4] << 12) | (s[5] << 15) | (o[6] << 18) | (o[7] << 21); break;
+            case 13: m = (o[0] << 0) | (o[1] << 3) | (s[2] << 6) | (o[3] << 9) | (s[4] << 12) | (o[5] << 15) | (s[6] << 18) | (o[7] << 21); break;
+            case 14: m = (o[0] << 0) | (o[1] << 3) | (s[2] << 6) | (s[3] << 9) | (o[4] << 12) | (s[5] << 15) | (s[6] << 18) | (s[7] << 21); break;
+            case 15: m = (o[0] << 0) | (o[1] << 3) | (o[2] << 6) | (o[3] << 9) | (s[4] << 12) | (s[5] << 15) | (s[6] << 18) | (o[7] << 21); break;
+            case 16: m = (o[0] << 0) | (o[1] << 3) | (o[2] << 6) | (o[3] << 9) | (o[4] << 12) | (s[5] << 15) | (o[6] << 18) | (s[7] << 21); break;
+        }
+        if (parent_table[m] == POSITION_TODISCOVER) {
+            //printf("Found new position: %d\n");
+            parent_table[m] = hash;
+            next_workload[m] = m;
+        }
+    }
+}
+
+
+// The predicate kernel
+void kernel predicate_neq0(global const int * restrict input, global unsigned int * restrict output, int nels) {
+    int i = get_global_id(0);
+    if (i >= nels) return;
+    output[i] = input[i] != 0;
+}
+
+
+// scan of one quartet per work-item, return tail from local memory scan
+int scan_single_element(int wg_start, int wg_end, int li, int tail,
+	global int4 * restrict out,
+	global const int4 * restrict in,
+	local int *lmem)
+{
+	const int lws = get_local_size(0);
+
+	int4 sum = (int4)(0);
+	int i = wg_start + li;
+	if (i < wg_end) {
+		sum = in[i];
+		sum.s13 += sum.s02;
+		sum.s23 += sum.s11;
+	}
+
+	// Save tail for other work-items to use
+	lmem[li] = sum.s3;
+ 
+	// Do naive scan on the tails in local memory (which is actually better than doing Blelloch scan on local memory since we have a small number of elements)
+	for (int active_mask = 1; active_mask < lws; active_mask <<= 1) {
+		int pull_mask = active_mask - 1; // 000111...111
+		pull_mask = ~pull_mask;          // 111000...000
+		pull_mask = li & pull_mask;		 
+		pull_mask = pull_mask - 1;	 	 
+		barrier(CLK_LOCAL_MEM_FENCE);
+		if (li & active_mask) lmem[li] += lmem[pull_mask];
+	}
+	barrier(CLK_LOCAL_MEM_FENCE);
+
+	// At this point, lmem[li] contains the scan of the tails up to this work-item
+	// We can now add this to the sum of the quartet
+
+	// Add previous work-item's tail (only if in the same work-group, the first work-item in each work-group doesn't have a tail in lmem)
+	if (li > 0)
+		sum += (int4)(lmem[li - 1]);
+	
+	// We still need to add the tail from the previous work-group
+	sum += (int4)(tail);
+
+	// Check if we got to the end of the work-group, in which case we can write the result
+	if (i < wg_end)
+		out[i] = sum;
+
+	// Return the last element of local memory to be the tail for the next work-group
+	return lmem[get_local_size(0) - 1];
+}
+
+kernel void scan(
+	global int4 * restrict out,
+	global int * restrict tails,
+	global const int4 * restrict in,
+	int nels,
+	int preferred_wg_multiple,
+	local int *lmem)
+{
+
+	const int li = get_local_id(0);
+
+	// number of work-groups
+	const int nwg = get_num_groups(0); 		
+	// id of this work-group
+	const int group_id = get_group_id(0);
+	// elements per work-group
+	int els_per_wg = round_mul_up(round_div_up(nels, nwg), preferred_wg_multiple);
+
+	// index of first element assigned to this work-group
+	int wg_start = els_per_wg * group_id;
+
+	// index of last element assigned to this work-group
+	const int wg_end = min(nels, els_per_wg * (group_id+1));
+
+	int tail = 0;
+	
+	// Prefetch local size to avoid recomputing it each time
+	int ls = get_local_size(0);
+
+	while (wg_start < wg_end) {
+		tail += scan_single_element(wg_start, wg_end, li, tail, out, in, lmem);
+		wg_start += ls;
+		barrier(CLK_LOCAL_MEM_FENCE);
+	}
+
+	// The first item in each work-group saves the tail for fixup
+	if (nwg > 1 && li == 0) {
+		tails[group_id] = tail;
+	}
+}
+
+kernel void scan_fixup(
+	global int4 * restrict out,
+	global const int * restrict tails,
+	int nels,
+	int preferred_wg_multiple)
+{
+	const int nwg = get_num_groups(0); // number of work-groups
+	const int group_id = get_group_id(0); // id of this work-group
+
+	if (group_id == 0) return;
+
+	// elements per work-group
+	int els_per_wg = round_mul_up(round_div_up(nels, nwg), preferred_wg_multiple);
+
+	// index of first element assigned to this work-group
+	int wg_start = els_per_wg * group_id;
+
+	// index of first element NOT assigned to us
+	const int wg_end = min(nels, els_per_wg * (group_id+1));
+
+	// The tail we saved in the first work-item of each work-group
+	int fixup_tail = tails[group_id-1];
+
+	// The gi can now be computed as follows:
+	int i = wg_start + get_local_id(0);
+
+	while (i < wg_end) {
+		out[i] += (int4)(fixup_tail);
+		i += get_local_size(0);
+	}
+}
+
+kernel void scatter(global const unsigned int * predicates, global const unsigned int * idx_sums, global unsigned int * next_payload_table, global unsigned int * new_payload, int nels) {
+    int i = get_global_id(0);
+    if (i >= nels) return;
+    if (predicates[i]) {
+        new_payload[idx_sums[i]] = next_payload_table[i];
+    }
+}

@@ -1,0 +1,185 @@
+// As for the 4x4, we can just solve one grid, since the other is the same but flipped (on an axis)
+#define PMOVE1MASK 0b111000111000000000000000
+#define PMOVE2MASK 0b000111111111000000000000
+#define PMOVE3MASK 0b111111111000111111000000
+#define PMOVE4MASK 0b000111000111000111000000
+#define PMOVE5MASK 0b000000111000111000111000
+#define PMOVE6MASK 0b000000111111000111111111
+#define PMOVE7MASK 0b000000000000111111111000
+#define PMOVE8MASK 0b000000000000000111000111
+
+#define NPMOVE1MASK 0b000111000111111111111111
+#define NPMOVE2MASK 0b111000000000111111111111
+#define NPMOVE3MASK 0b000000000111000000111111
+#define NPMOVE4MASK 0b111000111000111000111111
+#define NPMOVE5MASK 0b111111000111000111000111
+#define NPMOVE6MASK 0b111111000000111000000000
+#define NPMOVE7MASK 0b111111111111000000000111
+#define NPMOVE8MASK 0b111111111111111000111000
+
+#define M1 0b100100100100100100100100
+#define M2 0b010010010010010010010010
+#define M3 0b001001001001001001001001
+
+#define POSITION_TODISCOVER (1<<24)
+#define ANYHASH (POSITION_TODISCOVER - 1)
+#define POSITION_STARTPOS 0
+
+void kernel setup_tables(
+    global unsigned int *parent_table,
+    global unsigned int *payload,
+    global unsigned int *next_payload,
+    global unsigned int *predicate_table,
+    global unsigned int *idx_sum_table,
+    global unsigned int *temp_sum_table,
+    int nels
+)
+{
+    int i = get_global_id(0);
+    if (i >= nels) return;
+    if (i == 0) {
+        parent_table[POSITION_STARTPOS] = 0; // Set the start position's parent to itself to indicate it is root
+    }
+    else{
+        parent_table[i] = POSITION_TODISCOVER;
+    }
+    // Set to 0 all the other tables
+    payload[i] = 0; // This has the nice side effect of setting the first iteration's payload to 0, which is the start position
+    next_payload[i] = 0;
+    predicate_table[i] = 0;
+    idx_sum_table[i] = 0;
+    temp_sum_table[i] = 0;
+}
+
+void _printboard(int pid, int sid){
+    int i = 0, j = 0;
+    for (int y = 0; y < 4; y++){
+        for (int x = 0; x < 4; x++){
+            if ((x+y)%2 == 0){
+                printf("%d ", (pid >> i) & 0x7);
+                i += 3;
+            } else {
+                printf("%d ", (sid >> j) & 0x7);
+                j += 3;
+            }
+        }
+        printf("\n");
+    }
+}
+
+/*
+ * This first kernel expands the primary board to the next level.
+ * It uses the bitfiddling method described above to calculate the new positions
+ * It will write the results to the results array
+ */
+ void kernel expand_primary(global unsigned int * restrict parent_table, global const unsigned int * workload, global unsigned int * next_workload, unsigned int workload_size) {
+    int i = get_global_id(0);
+    if (i >= workload_size) return;
+    // Get current item to expand
+    unsigned int hash = workload[i];
+
+    // Calculate the add1 position
+    unsigned int add1 = hash + M3;
+    //k = (add1 >> 1) & add1; // We can remove the & M2 because we know that there are no 111 as result  of add1, since we remove 110 immediately with this op
+    add1 = add1 ^ (add1 & ((add1 >> 1) | (add1 << 1))); // add1 = (add1 - ((k << 1)|k)) can be simplified to this
+
+    // Write the results. We both need to set the position's parent to the current position, and add it to the next workload
+    for (int i = 0; i < 16; i++) {
+        unsigned int m =    ((i & 0x7) == 0) * ((add1 & PMOVE1MASK) | (hash & NPMOVE1MASK)) +
+                            ((i & 0x7) == 1) * ((add1 & PMOVE2MASK) | (hash & NPMOVE2MASK)) +
+                            ((i & 0x7) == 2) * ((add1 & PMOVE3MASK) | (hash & NPMOVE3MASK)) +
+                            ((i & 0x7) == 3) * ((add1 & PMOVE4MASK) | (hash & NPMOVE4MASK)) +
+                            ((i & 0x7) == 4) * ((add1 & PMOVE5MASK) | (hash & NPMOVE5MASK)) +
+                            ((i & 0x7) == 5) * ((add1 & PMOVE6MASK) | (hash & NPMOVE6MASK)) +
+                            ((i & 0x7) == 6) * ((add1 & PMOVE7MASK) | (hash & NPMOVE7MASK)) +
+                            ((i & 0x7) == 7) * ((add1 & PMOVE8MASK) | (hash & NPMOVE8MASK));
+            add1 -= M2 * (i == 7);
+        
+        if (parent_table[m] == POSITION_TODISCOVER) {
+            parent_table[m] = hash;
+            next_workload[m] = m;
+        }
+    }
+}
+
+void kernel expand_primary_unvectorized(global unsigned int * restrict parent_table, global const unsigned int * workload, global unsigned int * next_workload, int workload_size){
+    // This kernel is the same as the vectorized one, but without bitgroups tricks.
+    // It still uses the partial move masks, but it does not use the bitgroups tricks
+    // It is used to test the performance of the bitgroups tricks
+    int i = get_global_id(0);
+    if (i >= workload_size) return;
+
+    // Get current item to expand
+    unsigned int hash = workload[i];
+
+    // Separate the bitgroups
+    unsigned char o[8] = {hash & 0x7, (hash >> 3) & 0x7, (hash >> 6) & 0x7, (hash >> 9) & 0x7, (hash >> 12) & 0x7, (hash >> 15) & 0x7, (hash >> 18) & 0x7, (hash >> 21) & 0x7};
+    unsigned char a[8] = {(o[0] + 1) % 6, (o[1] + 1) % 6, (o[2] + 1) % 6, (o[3] + 1) % 6, (o[4] + 1) % 6, (o[5] + 1) % 6, (o[6] + 1) % 6, (o[7] + 1) % 6};
+    unsigned char s[8] = {(o[0] + 5) % 6, (o[1] + 5) % 6, (o[2] + 5) % 6, (o[3] + 5) % 6, (o[4] + 5) % 6, (o[5] + 5) % 6, (o[6] + 5) % 6, (o[7] + 5) % 6};
+
+    // Write the results. We both need to set the position's parent to the current position, and add it to the next workload
+    for (int i = 1; i <= 16; i++) {
+        unsigned int m = 0;
+        switch (i) {
+            // Add moves
+            case 1: m = (a[0] << 0) | (o[1] << 3) | (a[2] << 6) | (o[3] << 9) | (o[4] << 12) | (o[5] << 15) | (o[6] << 18) | (o[7] << 21); break;
+            case 2: m = (o[0] << 0) | (a[1] << 3) | (a[2] << 6) | (a[3] << 9) | (o[4] << 12) | (o[5] << 15) | (o[6] << 18) | (o[7] << 21); break;
+            case 3: m = (a[0] << 0) | (a[1] << 3) | (a[2] << 6) | (o[3] << 9) | (a[4] << 12) | (a[5] << 15) | (o[6] << 18) | (o[7] << 21); break;
+            case 4: m = (o[0] << 0) | (a[1] << 3) | (o[2] << 6) | (a[3] << 9) | (o[4] << 12) | (a[5] << 15) | (o[6] << 18) | (o[7] << 21); break;
+            case 5: m = (o[0] << 0) | (o[1] << 3) | (a[2] << 6) | (o[3] << 9) | (a[4] << 12) | (o[5] << 15) | (a[6] << 18) | (o[7] << 21); break;
+            case 6: m = (o[0] << 0) | (o[1] << 3) | (a[2] << 6) | (a[3] << 9) | (o[4] << 12) | (a[5] << 15) | (a[6] << 18) | (a[7] << 21); break;
+            case 7: m = (o[0] << 0) | (o[1] << 3) | (o[2] << 6) | (o[3] << 9) | (a[4] << 12) | (a[5] << 15) | (a[6] << 18) | (o[7] << 21); break;
+            case 8: m = (o[0] << 0) | (o[1] << 3) | (o[2] << 6) | (o[3] << 9) | (o[4] << 12) | (a[5] << 15) | (o[6] << 18) | (a[7] << 21); break;
+            // Sub moves
+            case 9: m = (s[0] << 0) | (o[1] << 3) | (s[2] << 6) | (o[3] << 9) | (o[4] << 12) | (o[5] << 15) | (o[6] << 18) | (o[7] << 21); break;
+            case 10: m = (o[0] << 0) | (s[1] << 3) | (s[2] << 6) | (s[3] << 9) | (o[4] << 12) | (o[5] << 15) | (o[6] << 18) | (o[7] << 21); break;
+            case 11: m = (s[0] << 0) | (s[1] << 3) | (s[2] << 6) | (o[3] << 9) | (s[4] << 12) | (s[5] << 15) | (o[6] << 18) | (o[7] << 21); break;
+            case 12: m = (o[0] << 0) | (s[1] << 3) | (o[2] << 6) | (s[3] << 9) | (o[4] << 12) | (s[5] << 15) | (o[6] << 18) | (o[7] << 21); break;
+            case 13: m = (o[0] << 0) | (o[1] << 3) | (s[2] << 6) | (o[3] << 9) | (s[4] << 12) | (o[5] << 15) | (s[6] << 18) | (o[7] << 21); break;
+            case 14: m = (o[0] << 0) | (o[1] << 3) | (s[2] << 6) | (s[3] << 9) | (o[4] << 12) | (s[5] << 15) | (s[6] << 18) | (s[7] << 21); break;
+            case 15: m = (o[0] << 0) | (o[1] << 3) | (o[2] << 6) | (o[3] << 9) | (s[4] << 12) | (s[5] << 15) | (s[6] << 18) | (o[7] << 21); break;
+            case 16: m = (o[0] << 0) | (o[1] << 3) | (o[2] << 6) | (o[3] << 9) | (o[4] << 12) | (s[5] << 15) | (o[6] << 18) | (s[7] << 21); break;
+        }
+        if (parent_table[m] == POSITION_TODISCOVER) {
+            parent_table[m] = hash;
+            next_workload[m] = m;
+        }
+    }
+}
+
+// The predicate kernel
+void kernel predicate_neq0(global const int * restrict input, global unsigned int * restrict output, int nels) {
+    int i = get_global_id(0);
+    if (i >= nels) return;
+    output[i] = input[i] != 0;
+}
+
+kernel void step_naive_prefix_sum(global unsigned int* a, global unsigned int* b, int offset, int nels)
+{
+    int i = get_global_id(0);
+    if (i >= nels) return;
+    b[i] = a[i];
+    if (i >= offset) {
+        b[i] += a[i - offset];
+    }
+}
+
+kernel void scatter(global const unsigned int * scouted_positions, global const unsigned int * predicates, global unsigned int * idx_sums, global unsigned int * new_payload, int nels) {
+    int i = get_global_id(0);
+    if (i >= nels) return;
+    if (predicates[i]) {
+        new_payload[idx_sums[i]] = scouted_positions[i];
+    }
+}
+
+kernel void fill_table(global unsigned int *table, int nels){
+    int i = get_global_id(0);
+    if (i >= nels) return;
+    table[i] = i;
+}
+
+kernel void fill_table_k(global unsigned int *table, int nels, int value){
+    int i = get_global_id(0);
+    if (i >= nels) return;
+    table[i] = value;
+}

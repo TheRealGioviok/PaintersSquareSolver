@@ -1,0 +1,190 @@
+// The mask to derive the new position from the old one and the maximal move
+#define PMOVE1MASK 0b111000111000000
+#define PMOVE2MASK 0b000111111000000
+#define PMOVE3MASK 0b111111111111111
+#define PMOVE4MASK 0b000000111111000
+#define PMOVE5MASK 0b000000111000111
+
+#define SMOVE1MASK 0b111111111000
+#define SMOVE2MASK 0b111111000111
+#define SMOVE3MASK 0b111000111111
+#define SMOVE4MASK 0b000111111111
+
+#define M1 0b100100100100100 // 4, 5, 6, 7
+#define M2 0b010010010010010 // 2, 3, 6, 7
+#define M3 0b001001001001001 // 1, 3, 5, 7
+
+#define M1S 0b100100100100 // One less than M1
+#define M2S 0b010010010010 // One less than M2
+#define M3S 0b001001001001 // One less than M3
+
+#define POSITION_TODISCOVER 0x8000
+#define POSITION_STARTPOS 0 // 0000 0000 0000 0000
+
+
+void kernel setup_tables(global unsigned short * restrict parent_table, global unsigned short * restrict payload, global unsigned short * restrict next_payload, global unsigned short * restrict predicate_table, global unsigned short * restrict idx_sum_table, global unsigned short * temp_sum_table , int nels) {
+    int i = get_global_id(0);
+    if (i >= nels) return;
+    if (i == 0) {
+        parent_table[POSITION_STARTPOS] = 0; // Set the start position's parent to itself to indicate it is root
+    }
+    else{
+        parent_table[i] = POSITION_TODISCOVER;
+    }
+    // Set to 0 all the other tables
+    payload[i] = 0; // This has the nice side effect of setting the first iteration's payload to 0, which is the start position
+    next_payload[i] = 0;
+    predicate_table[i] = 0;
+    idx_sum_table[i] = 0;
+    temp_sum_table[i] = 0;
+}
+
+void _printboard (short pid, short sid){
+    int i = 0, j = 0;
+    for (int y = 0; y < 3; y++){
+        for (int x = 0; x < 3; x++){
+            if ((x+y)%2 == 0){
+                printf("%d ", (pid >> i) & 0x7);
+                i += 3;
+            } else {
+                printf("%d ", (sid >> j) & 0x7);
+                j += 3;
+            }
+        }
+        printf("\n");
+    }
+}
+
+void kernel expand_primary(global unsigned short * restrict parent_table, global const unsigned short * workload, global unsigned short * next_workload, int workload_size){
+    int i = get_global_id(0);
+    if (i >= workload_size) return;
+
+    // Get current item to expand
+    short hash = workload[i];
+
+    // Separate the bitgroups
+    char o[5] = {hash & 0x7, (hash >> 3) & 0x7, (hash >> 6) & 0x7, (hash >> 9) & 0x7, (hash >> 12) & 0x7};
+    signed char a[5] = {(o[0] + 1) % 6, (o[1] + 1) % 6, (o[2] + 1) % 6, (o[3] + 1) % 6, (o[4] + 1) % 6};
+    char s[5] = {(o[0] + 5) % 6, (o[1] + 5) % 6, (o[2] + 5) % 6, (o[3] + 5) % 6, (o[4] + 5) % 6};
+    
+    // Calculate the moves  
+    short m1 = (a[0] << 0) | (o[1] << 3) | (a[2] << 6) | (o[3] << 9) | (o[4] << 12);
+    short m2 = (o[0] << 0) | (a[1] << 3) | (a[2] << 6) | (o[3] << 9) | (o[4] << 12);
+    short m3 = (a[0] << 0) | (a[1] << 3) | (a[2] << 6) | (a[3] << 9) | (a[4] << 12);
+    short m4 = (o[0] << 0) | (o[1] << 3) | (a[2] << 6) | (a[3] << 9) | (o[4] << 12);
+    short m5 = (o[0] << 0) | (o[1] << 3) | (a[2] << 6) | (o[3] << 9) | (a[4] << 12);
+
+    short m6 = (s[0] << 0) | (o[1] << 3) | (s[2] << 6) | (o[3] << 9) | (o[4] << 12);
+    short m7 = (o[0] << 0) | (s[1] << 3) | (s[2] << 6) | (o[3] << 9) | (o[4] << 12);
+    short m8 = (s[0] << 0) | (s[1] << 3) | (s[2] << 6) | (s[3] << 9) | (s[4] << 12);
+    short m9 = (o[0] << 0) | (o[1] << 3) | (s[2] << 6) | (s[3] << 9) | (o[4] << 12);
+    short m10 = (o[0] << 0) | (o[1] << 3) | (s[2] << 6) | (o[3] << 9) | (s[4] << 12);
+
+    // Write the results. We both need to set the position's parent to the current position, and add it to the next workload
+    for (int i = 1; i <= 10; i++) {
+        short m = 0;
+        switch (i) {
+            case 1: m = m1; break;
+            case 2: m = m2; break;
+            case 3: m = m3; break;
+            case 4: m = m4; break;
+            case 5: m = m5; break;
+            case 6: m = m6; break;
+            case 7: m = m7; break;
+            case 8: m = m8; break;
+            case 9: m = m9; break;
+            case 10: m = m10; break;
+        }
+        if (parent_table[m] == POSITION_TODISCOVER) {
+            parent_table[m] = hash;
+            next_workload[m] = m;
+        }
+    }
+}
+
+
+void kernel expand_secondary(global unsigned short * restrict parent_table, global const unsigned short * workload, global unsigned short * next_workload, int workload_size){
+    int i = get_global_id(0);
+    if (i >= workload_size) return;
+
+    // Get current item to expand
+    short hash = workload[i];
+
+    // Separate the bitgroups
+    char o[4] = {hash & 0x7, (hash >> 3) & 0x7, (hash >> 6) & 0x7, (hash >> 9) & 0x7};
+    signed char a[4] = {(o[0] + 1) % 6, (o[1] + 1) % 6, (o[2] + 1) % 6, (o[3] + 1) % 6};
+    char s[4] = {(o[0] + 5) % 6, (o[1] + 5) % 6, (o[2] + 5) % 6, (o[3] + 5) % 6};
+    
+    // Calculate the moves  
+    short m1 = (a[0] << 0) | (a[1] << 3) | (a[2] << 6) | (o[3] << 9);
+    short m2 = (a[0] << 0) | (a[1] << 3) | (o[2] << 6) | (a[3] << 9);
+    short m3 = (a[0] << 0) | (o[1] << 3) | (a[2] << 6) | (a[3] << 9);
+    short m4 = (o[0] << 0) | (a[1] << 3) | (a[2] << 6) | (a[3] << 9);
+
+    short m5 = (s[0] << 0) | (s[1] << 3) | (s[2] << 6) | (o[3] << 9);
+    short m6 = (s[0] << 0) | (s[1] << 3) | (o[2] << 6) | (s[3] << 9);
+    short m7 = (s[0] << 0) | (o[1] << 3) | (s[2] << 6) | (s[3] << 9);
+    short m8 = (o[0] << 0) | (s[1] << 3) | (s[2] << 6) | (s[3] << 9);
+
+    // Write the results. We both need to set the position's parent to the current position, and add it to the next workload
+    for (int i = 1; i <= 8; i++) {
+        short m = 0;
+        switch (i) {
+            case 1: m = m1; break;
+            case 2: m = m2; break;
+            case 3: m = m3; break;
+            case 4: m = m4; break;
+            case 5: m = m5; break;
+            case 6: m = m6; break;
+            case 7: m = m7; break;
+            case 8: m = m8; break;
+        }
+        if (parent_table[m] == POSITION_TODISCOVER) {
+            parent_table[m] = hash;
+            next_workload[m] = m;
+        }
+    }
+}
+
+// When we generate next workloads, we may leave gaps in the array
+// This can be solved by compacting the array
+// To compact the array, we use the stream compaction algorithm described in the GPU Gems book
+// We want to remove 0's from the array, so we will use the predicate "is not 0"
+
+// The predicate kernel
+void kernel predicate_neq0(global const short * restrict input, global short * restrict output, int nels) {
+    int i = get_global_id(0);
+    if (i >= nels) return;
+    output[i] = input[i] != 0;
+}
+
+// Another predicate kernel 
+void kernel predicate_geq(global const short * input, global short * output, short  check, int nels) {
+    int i = get_global_id(0);
+    if (i >= nels) return;
+    output[i] = input[i] >= check;
+}
+
+void kernel predicate_ggeq(global const int * input, global int * output, int  check, int nels) {
+    int i = get_global_id(0);
+    if (i >= nels) return;
+    output[i] = input[i] == check;
+}
+
+kernel void step_naive_prefix_sum(global short* a, global short* b, int offset, int nels)
+{
+    int i = get_global_id(0);
+    if (i >= nels) return;
+    b[i] = a[i];
+    if (i >= offset) {
+        b[i] += a[i - offset];
+    }
+}
+
+kernel void scatter(global const short * scouted_positions, global const short * predicates, global short * idx_sums, global short * new_payload, int nels) {
+    int i = get_global_id(0);
+    if (i >= nels) return;
+    if (predicates[i]) {
+        new_payload[idx_sums[i]] = scouted_positions[i];
+    }
+}
