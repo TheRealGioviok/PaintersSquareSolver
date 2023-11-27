@@ -135,7 +135,7 @@ In particolare, nella versione seriale, la mossa è implementata come una somma 
 Questo è, ovviamente, estremamente inefficiente, in quanto la maggior parte delle celle non viene modificata dalla mossa, e quindi non è necessario calcolare la somma.  
 Per ovviare a ciò, notiamo che ogni possibile mossa è una combinazione di alcune caselle prese dalla configurazione precedente, ed altre dalla configurazione $Move^{\pm 1}(M, B)$.
 
-Otteniamo quindi due posizioni intermedie, $M^-$ e $M^+$. Ad esempio, nella kernel di generazione delle mosse `expand` senza subvettorizzazione (vedi #5.2), abbiamo il seguente codice:
+Otteniamo quindi due posizioni intermedie, $M^-$ e $M^+$ (corrispondenti ad `s` e `a` rispettivamente nel codice). Ad esempio, nel kernel di generazione delle mosse `expand` senza subvettorizzazione (vedi #5.2), abbiamo il seguente codice:
 ```c
 // Get current item to expand
 unsigned int hash = workload[i];
@@ -240,9 +240,9 @@ Un idea interessante che ho avuto per cercare di migliorare l'algoritmo di expan
 
 Ma cosa intendiamo con sottovettorizzazione?
 
-Visto che ogni posizione è in realtà la concatenazione di 3-bit per ogni cella, possiamo immaginare che spaccare l'hash nei varii bit-group, aggiungere, modulare e ricombinare sia un'operazione possibilmente problematica all'aumentare della dimensione della matrice. Ricordiamo infatti che, per $m = 5$, abbiamo 13 celle nella griglia principale, e 12 celle nella griglia secondaria, quindi l'expand di una griglia principale richiederebbe svariate operazioni solo per spacchettare e ricombinare l'hash.
+Visto che ogni posizione è in realtà la concatenazione di 3-bit per ogni cella, possiamo immaginare che spaccare l'hash nei varii bit-group, aggiungere, modulare e ricombinare sia un'operazione possibilmente problematica all'aumentare della dimensione della matrice. Ricordiamo infatti che, per $m = 5$, abbiamo 13 celle nella griglia principale, e 12 in quella secondaria, quindi l'expand di una griglia principale richiederebbe ancora più operazioni solo per spacchettare e ricombinare l'hash.
 
-Per ovviare a ciò, propongo un nuovo tipo di operazione, che chiameremo operazione bit-raggruppata, che permette di eseguire operazioni su bit-group, senza modificare gli altri bit-group, eliminando quindi la necessità di spacchettare e ricombinare l'hash.
+Per ovviare a ciò, propongo un nuovo tipo di operazione, che chiameremo operazione bit-raggruppata, che permette di eseguire operazioni su bit-group in parallelo, senza che il risultato di un bitgroup possa influenzare gli altri, eliminando difatto la necessità di spacchettare e ricombinare l'hash.
 
 In particolare, mostriamo dopo l'implementazione di incremento e decremento modulare in bit-group, che sono le operazioni che ci interessano.
 
@@ -258,7 +258,7 @@ In particolare, si è scelto di implementare l'algoritmo di scan parallelo con s
 Di seguito un grafico che mostra i tempi di esecuzione al variare del local work size.  
 ![Tempi al variare del local work size](Images/naive-vs-windowed.png)
 
-Inutile dire che l'approccio windowed è molto più efficiente. Inoltre, questa ottimizzazione porta la distribuzione dei tempi di esecuzione ad essere molto più uniforme, il che vuol dire che in futuro può valere la pena di ottimizzare altri step della pipeline, come possiamo vedere in questi dati (ottenuti con local work size = groups = 256):
+Inutile dire che l'approccio windowed è molto più efficiente. Inoltre, questa ottimizzazione porta la distribuzione dei tempi di esecuzione ad essere molto più uniforme, il che vuol dire che in futuro può valere la pena di ottimizzare altri step della pipeline, come possiamo vedere in questi dati (lws = groups = 256):
 
 ```
 ===== Timings =====
@@ -273,10 +273,10 @@ Total time: 9.57232ms
 ```
 
 ### [6.1. Considerazione sulla fattibilità per dimensioni maggiori]<a name="6.1"></a>
-Per quanto i risultati ottenuti siano incoraggianti, è necessario fare alcune considerazioni sulla fattibilità di questo approccio per dimensioni maggiori.
-Per prima cosa, bisogna abbandonare l'idea di usare un vettore nextpayload con corrispondenza 1:1 con le posizioni (per quanto discusso in #5.2).
+Per quanto i risultati ottenuti siano incoraggianti, è giusto fare alcune considerazioni sulla fattibilità di questo approccio per dimensioni maggiori.
+Per prima cosa, bisogna abbandonare l'idea di usare un vettore nextpayload con corrispondenza uno ad uno con le posizioni (per quanto discusso in #5.2).
 Invece, potremmo fare scrivere ad ogni thread in uno slot dedicato, e fare un operazione di compaction ad ogni generazione di singolo tipo di mossa. Ovviamente, si tratta di un trade-off tra memoria e tempo di esecuzione, ma è necessario per poter procedere oltre.  
-Inoltre, è necessario riuscire a trovare un modo per codificare rotazioni e flip di una posizione con lo stesso hash. Questo è necessario per poter ridurre il numero di posizioni da generare di un fattore 8, e quindi ridurre il tempo di esecuzione (fino a 8 volte).
+Inoltre, è necessario riuscire a trovare un modo per encodare rotazioni e flip di una posizione con lo stesso hash. Questo permetterebbe la riduzione del numero di posizioni da generare di un fattore 8, e di conseguenza, anche il tempo di esecuzione.
 Infine, se si riuscisse ad applicare il concetto di sottovettorizzazione in base 6, si potrebbe ridurre il numero di hash possibili al minimo possibile.
 
 ### [6.2 Test sintetico di generazione delle mosse]<a name="6.2"></a>
