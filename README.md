@@ -42,7 +42,7 @@ Tutti i tempi di esecuzione derivano da run eseguite sulla stessa macchina nelle
 ***
 
 ## [1. Painter’s Square]<a name="1"></a>
-Il painter’s square (originariamente “square puzzle”), è un puzzle a singolo giocatore, dove l’utente viene presentato con una griglia di quadrati colorati, il cui obiettivo è riportarli tutti ad uno stesso colore mediante un set di mosse note. Il puzzle è stato originariamente pensato ed implementato in una applet Scratch da Bruno Montalto, mio carissimo amico, nonchè collega di questo corso.
+Il painter’s square (originariamente “square puzzle”), è un puzzle a giocatore singolo, dove l’utente viene presentato con una griglia di quadrati colorati, il cui obiettivo è riportarli tutti ad uno stesso colore mediante un set di mosse note. Il puzzle è stato originariamente pensato ed implementato in una applet Scratch da Bruno Montalto, mio carissimo amico, nonchè collega di questo corso.
 
 Le mosse possono essere effettuate su una qualsiasi casella, e cambiano il colore di alcune caselle (in base ad un pattern noto come “brush”) di una certa quantità.
 In particolare, i colori che possono essere assunti da ogni casella sono univocamente associati ad un numero.  
