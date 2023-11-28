@@ -77,7 +77,7 @@ In questa relazione, proponiamo i risulati sia per la versione originale, che pe
 ***
 
 ## [2. Soluzioni note]<a name="2"></a>
-Il problema del painter’s square è stato risolto in maniera per i parametri originali, nonchè per $m = 4$ ed $m = 5$ da me. In particolare, ho trovato degli algoritmi che permettono la risoluzione progressiva del puzzle. La lunghezza media delle soluzioni con suddetti algoritmi è di circa 20 mosse per $m = 3$, 43 per $m = 4$ e 124 per $m = 5$.
+Il problema del painter’s square è stato risolto in maniera algoritmica per i parametri originali, nonchè per $m = 4$ ed $m = 5$ da me. In particolare, ho trovato degli algoritmi che permettono la risoluzione progressiva del puzzle. La lunghezza media delle soluzioni con suddetti algoritmi è di circa 20 mosse per $m = 3$, 43 per $m = 4$ e 124 per $m = 5$.
 
 Questa soluzione, per quanto efficace nella pratica, non è ottimale, in quanto non è garantito (ed anzi è evidente) che la soluzione trovata sia la più breve possibile.
 
