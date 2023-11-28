@@ -3,6 +3,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+unsigned int  invert(int x){
+    unsigned int dec[8] = {x & 0x7, (x >> 3) & 0x7, (x >> 6) & 0x7, (x >> 9) & 0x7, (x >> 12) & 0x7, (x >> 15) & 0x7, (x >> 18) & 0x7, (x >> 21) & 0x7};
+    return dec[6] | (dec[7] << 3) | (dec[4] << 6) | (dec[5] << 9) | (dec[2] << 12) | (dec[3] << 15) | (dec[0] << 18) | (dec[1] << 21);
+}
+
 void error(const char *err){
 	fprintf(stderr, "%s\n", err);
 	exit(1);
@@ -345,6 +350,81 @@ int main(int argc, char *argv[]){
     float total_time = expand_time + predicate_time + main_scan_time + tails_scan_time + fixup_time + scatter_time;
     printf("Total time: %gms\n", total_time);
     printf("===== End Timings =====\n");
+
+    // Solve for the user!
+    // Ask for a position
+    int pposition = POSITION_STARTPOS;
+    int sposition = POSITION_STARTPOS;
+    int ip = 0;
+    int sp = 0;
+    for (int i = 0; i < 16; i++){
+        int x = i % 4;
+        int y = i / 4;
+        printboard(pposition, sposition);
+        printf("\t\tEnter for square %d: ", i);
+        int val = 8;
+        while (!(val >= 0 && val <= 5)){
+            scanf("%d", &val);
+            if (!(val >= 0 && val <= 5)) printf("        \tInvalid value, try again (0-5): ");
+        }
+        if ((x+y)% 2 == 0){
+            pposition += val << ip;
+            ip += 3;
+        } else {
+            sposition += val << sp;
+            sp += 3;
+        }
+    }
+
+    // Download parent table to host
+    int *parent_table_host = malloc(buffer_size);
+    err = clEnqueueReadBuffer(que, parent_table, CL_TRUE, 0, buffer_size, parent_table_host, 0, NULL, NULL);
+    ocl_check(err, "reading parent table to host");
+
+    // Printf current hash
+    printf("Current hash: %d\n", pposition);
+
+    // Check if the position is solvable (parent_table[pposition] != POSITION_TODISCOVER)
+    if (parent_table_host[pposition] == POSITION_TODISCOVER){
+        printf("Position is not solvable\n");
+        return 0;
+    }
+
+    // Solve primary
+    printf("Solving...\n");
+    unsigned int current_position = pposition;
+    unsigned int primary_current_distance = 0;
+
+    while (current_position != POSITION_STARTPOS){
+        printboard(current_position, sposition);
+        printf("\n");
+        getchar();
+        unsigned  next_position = parent_table_host[current_position];
+        current_position = next_position;
+        primary_current_distance++;
+    }
+
+    // Print solution
+    printf("Primary solution found in %d moves\n", primary_current_distance);
+
+    // Solve secondary 
+    current_position = invert(sposition);
+    unsigned int secondary_current_distance = 0;
+
+    while (current_position != POSITION_STARTPOS){
+        printboard(pposition, invert(current_position));
+        printf("\n");
+        getchar();
+        unsigned  next_position = parent_table_host[current_position];
+        current_position = next_position;
+        secondary_current_distance++;
+    }
+
+    // Print solution
+    printf("Secondary solution found in %d moves\n", secondary_current_distance);
+
+    // Print total solution
+    printf("Total solution found in %d moves\n", primary_current_distance + secondary_current_distance);
 
     // Cleanup
     clReleaseKernel(expand_kernel);
